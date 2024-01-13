@@ -3,6 +3,9 @@ uuid = "5c04a23d-3ec1-483a-9a42-f10c7af90bf0"
 authors = ["Sam Atman <atmanistan@gmail.com> and contributors"]
 version = "1.0.0-DEV"
 
+[deps]
+ToggleMenus = "6dfc96c8-e1b7-449c-9871-5de18f44e5a6"
+
 [compat]
 julia = "1"
 
