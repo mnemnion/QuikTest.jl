@@ -2,9 +2,9 @@ module QuikTest
 
 using ToggleMenus
 
-import REPL.TerminalMenus: move_up!
+import REPL.TerminalMenus: request
 
-export menu  # for now
+export menu, quiktest # for now
 
 const header::String = "Press t for test (✅), s for snapshot (📸) g for garbage (🗑 ), G to clear"
 const settings::Vector{Char} = ['t', 's', 'g']
@@ -37,4 +37,18 @@ end
 
 menu = ToggleMenuMaker(header, settings, icons, keypress=onkey)
 
+function quiktest()
+    hist = Base.active_repl.mistate.current_mode.hist
+    history = hist.history
+    modes = hist.modes
+    lines = String[]
+    println("start $(hist.start_idx) cur $(hist.cur_idx) last $(hist.last_idx) ")
+    for i = hist.start_idx+1:length(history)-1
+        if !occursin("quiktest(", history[i]) && modes[i] == :julia
+            push!(lines, history[i])
+        end
+    end
+    request(menu(lines))
 end
+
+end  # module QuikTest
