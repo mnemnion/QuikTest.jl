@@ -55,7 +55,7 @@ function onkey(menu::ToggleMenu, i::UInt32)
     return false
 end
 
-menu = ToggleMenuMaker(header, settings, icons, keypress=onkey)
+menu = ToggleMenuMaker(header, settings, icons, 20, keypress=onkey)
 
 function make_test_module(main::Module)
     # TODO we use this twice and it's expensive, we should cache it
@@ -87,16 +87,26 @@ function make_test_module(main::Module)
     return test_mod
 end
 
-function quiktest()
+function _quiktest(numlines::Integer, stop::Integer)
+    !isinteractive() && error("Julia must be in interactive mode")
+    numlines = abs(numlines)
     hist = Base.active_repl.mistate.current_mode.hist
     history = hist.history
     modes = hist.modes
     lines = String[]
-    for i = hist.start_idx+1:length(history)-1
+    count = 0
+    for i = length(history)-1:-1:1
         if !occursin("quiktest(", history[i]) && modes[i] == :julia
             push!(lines, history[i])
+            count += 1
+        end
+        if count ≥ numlines || i ≤ stop
+            break
         end
     end
+    reverse!(lines)
+    println("lines:")
+    println(lines...)
     answers = []
     status = []
     main = Base.active_repl.mistate.active_module
@@ -149,7 +159,6 @@ function quiktest()
             continue
         end
         tcount += 1
-        println(state)
         line = line_dict[hi_line]
         if state == 'k'
             try
@@ -183,6 +192,9 @@ function _testify(mod::Module, e_str::AbstractString)
             return string(rmlines(:(@test_throws LoadError $e)))
         end
     end
+    if ans isa Symbol
+        ans = QuoteNode(ans)
+    end
     e = rmlines(expr)
     string(rmlines(:(@test $e !== $ans)))
 end
@@ -201,6 +213,16 @@ function _snaptestify(mod::Module, e_str::AbstractString)
         ans_str = string(ans)
     end
     string(rmlines(:(@test repr($e) == "📸" * $ans_str)))
+end
+
+function quiktest()
+    !isinteractive() && error("Julia must be in interactive mode")
+    hist = Base.active_repl.mistate.current_mode.hist
+    _quiktest(typemax(Int64), hist.start_idx)
+end
+
+function quiktest(n::Integer)
+    _quiktest(n, 1)
 end
 
 end  # module QuikTest
