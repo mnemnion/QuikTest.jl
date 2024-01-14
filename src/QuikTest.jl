@@ -7,7 +7,7 @@ import REPL.TerminalMenus: request
 
 export menu, quiktest # for now
 
-head = "Press {bold gold1}t{/bold gold1} for test (✅), {bold gold1}s{/bold gold1} for snapshot (📸) {bold gold1}g{/bold gold1} for garbage (🗑 ), {bold gold1}G{/bold gold1} to clear"
+head = "Press {bold gold1}t{/bold gold1} for test (✅), {bold gold1}s{/bold gold1} for snapshot (📸), {bold gold1}g{/bold gold1} for garbage (🗑 ), {bold gold1}G{/bold gold1} to clear"
 header = apply_style(head)
 const settings::Vector{Char} = ['t', 's', 'g']
 const icons::Vector{String} = ["✅", "📸", "🗑 "]
@@ -43,7 +43,6 @@ menu = ToggleMenuMaker(header, settings, icons, keypress=onkey)
 function make_test_module(main::Module)
     module_names = Symbol[]
     for name in names(main; all=true, imported=true)
-        # Check if the binding is a module
         if isdefined(Main, name)
             val = Base.eval(Main, name)
             if val ≠ main && val isa Module
@@ -52,10 +51,20 @@ function make_test_module(main::Module)
         end
     end
     test_mod = Base.eval(main, :(module $(gensym()) end))
+    # Import existing module namese on a best-effort basis
     for name in module_names
         try Base.eval(test_mod, :(using $(name)))
         catch e
         end
+    end
+    try
+        preface = Base.eval(main, :(QUIKTEST_PREFACE))
+        try
+            Base.eval(test_mod, preface)
+        catch e
+            @warn showerror(e)
+        end
+    catch e
     end
     return test_mod
 end
