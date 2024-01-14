@@ -1,7 +1,7 @@
 module QuikTest
 
-import InteractiveUtils: clipboard
-import MacroTools: rmlines
+import InteractiveUtils: clipboard, subtypes
+import MacroTools: striplines
 import REPL.TerminalMenus: request
 import Term: apply_style, highlight_syntax
 
@@ -9,11 +9,11 @@ using ToggleMenus
 
 export menu, quiktest # for now
 
-head = ("[{bold gold1}k{/bold gold1}]eep (🧿), [{bold gold1}j{/bold gold1}]unk (🗑 ), [{bold gold1}t{/bold gold1}]est (✅), [{bold gold1}s{/bold gold1}]napshot (📸)",
+head = ("[{bold gold1}k{/bold gold1}]eep (🧿), [{bold gold1}t{/bold gold1}]est (✅), [{bold gold1}s{/bold gold1}]napshot (📸), [{bold gold1}j{/bold gold1}]unk (🗑 ), [{bold gold1}e{/bold gold1}]rror test (❗️), [{bold gold1}b{/bold gold1}]roken (⚠️)",
        "[{bold gold1}U{/bold gold1}]p, [{bold gold1}D{/bold gold1}]own, {bold gold1}J{/bold gold1} to clear")
 const header = apply_style(join(head, "\n"))
-const settings::Vector{Char} = ['k', 'j', 't', 's']
-const icons::Vector{String} = ["🧿", "🗑 ", "✅", "📸"]
+const settings::Vector{Char} = ['k', 't', 's', 'j', 'e', 'b']
+const icons::Vector{String} = ["🧿", "✅", "📸", "🗑 ", "❗️", "⚠️"]
 
 function onkey(menu::ToggleMenu, i::UInt32)
     options, selections = menu.options, menu.selections
@@ -146,8 +146,18 @@ function _quiktest(numlines::Integer, stop::Integer)
         push!(selections, '\0')
     end
     returned = request(menu(options, selections))
-    if all(x -> x[1] == '\0', returned)
+    tcount, the_test = prepare_test(returned, line_dict, main)
+    if the_test === nothing
         println("quiktest canceled")
+        return nothing
+    end
+    the_test |> clipboard
+    Base.eval(main, :(latest_test = $(repr(the_test))))
+    print("$tcount line test copied to clipboard and assigned to 'latest_test'")
+end
+
+function prepare_test(returned::Vector{Tuple{Char,String}}, line_dict::Dict{String,String}, main::Module)
+    if all(x -> x[1] == '\0', returned)
         return nothing
     end
     tests = String[]
@@ -163,56 +173,20 @@ function _quiktest(numlines::Integer, stop::Integer)
         if state == 'k'
             try
                 Base.eval(ans_mod, Meta.parse(line))
-            catch e
-                error("this line will error: $line")
+                push!(tests, pad, line, "\n")
+            catch _
+                @warn "this line errors: $line"
+                push!(tests, pad, "# error in: " * line, "\n")
             end
-            push!(tests, pad, line, "\n")
         elseif state == 't'
             push!(tests, pad, _testify(ans_mod, line), "\n")
         elseif state == 's'
             push!(tests, pad, _snaptestify(ans_mod, line), "\n")
+        elseif state == 'e'
+            push!(tests, pad, _errtestify(ans_mod, line), "\n")
         end
     end
-    the_test = join(tests)
-    the_test |> clipboard
-    Base.eval(main, :(latest_test = $(repr(the_test))))
-    print("$tcount line test copied to clipboard and assigned to 'latest_test'")
-end
-
-function _testify(mod::Module, e_str::AbstractString)
-    expr = Meta.parse(e_str)
-    ans = try
-        Base.eval(mod, expr)
-    catch err
-        if err isa LoadError
-            e = rmlines(expr)
-            return string(rmlines(:(@test_throws StackOverflowError eval($e))))
-        else
-            e = rmlines(expr)
-            return string(rmlines(:(@test_throws LoadError $e)))
-        end
-    end
-    if ans isa Symbol
-        ans = QuoteNode(ans)
-    end
-    e = rmlines(expr)
-    string(rmlines(:(@test $e !== $ans)))
-end
-
-function _snaptestify(mod::Module, e_str::AbstractString)
-    expr = Meta.parse(e_str)
-    ans = try
-        Base.eval(mod, expr)
-    catch e
-        error("Can't make a @test_throws snapshot, try [t] ✅: $e")
-    end
-    e = rmlines(expr)
-    if ans isa AbstractString
-        ans_str = ans
-    else
-        ans_str = string(ans)
-    end
-    string(rmlines(:(@test repr($e) == "📸" * $ans_str)))
+    return tcount, join(tests)
 end
 
 function quiktest()
@@ -223,6 +197,82 @@ end
 
 function quiktest(n::Integer)
     _quiktest(n, 1)
+end
+
+# Helper functions
+
+function _testify(mod::Module, e_str::AbstractString)
+    expr = (Meta.parse(e_str))
+    ans = try
+        Base.eval(mod, expr)
+    catch err
+        @warn "unexpected error in: $e_str"
+        if err isa LoadError
+            return "# unexpected error: " * string(striplines(:(@test_throws $(wrong_error(err)) eval($expr))))
+        else
+            return "# unexpected error: " * string(striplines(:(@test_throws $(wrong_error(err)) $expr)))
+        end
+    end
+    if ans isa Symbol
+        ans = QuoteNode(ans)
+    end
+    string(striplines(:(@test $expr !== $ans)))
+end
+
+function _errtestify(mod::Module, e_str::AbstractString)
+    expr = Meta.parse(e_str)
+    try
+        ans = Base.eval(mod, expr)
+        @warn "no error in: $e_str"
+        return "# No error: " * string(striplines(:(@test $expr !== $ans)))
+    catch err
+        return _errorize(err, expr)
+    end
+end
+
+function _snaptestify(mod::Module, e_str::AbstractString)
+    expr = Meta.parse(e_str)
+    ans = try
+        Base.eval(mod, expr)
+    catch err
+        @warn "can't snaptest an error, throws $(typeof(err)): $e_str"
+        return "# Unexpected error: " * _errorize(ans, err)
+    end
+    if ans isa AbstractString
+        ans_str = ans
+    else
+        ans_str = repr(ans)
+    end
+    string(striplines(:(@test repr($expr) == "snap!" * $ans_str)))
+end
+
+errdict = Dict()
+
+function allsubtypes(T::Any, v=[])
+    push!(v, T)
+    for U in subtypes(T)
+        allsubtypes(U, v)
+    end
+    return v
+end
+
+let errvec = collect(allsubtypes(Exception))
+    errdict[errvec[begin]] = errvec[end]
+    for i = Iterators.drop(eachindex(errvec), 1)
+        errdict[errvec[i]] = errvec[i-1]
+    end
+end
+
+function wrong_error(e::Exception)
+    return errdict[typeof(e)]
+end
+
+function _errorize(err::Exception, expr)
+    if err isa LoadError
+        return string(striplines(:(@test_throws $(wrong_error(err)) eval($expr))))
+    else
+        return string(striplines(:(@test_throws $(wrong_error(err)) $expr)))
+    end
 end
 
 end  # module QuikTest
