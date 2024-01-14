@@ -7,35 +7,50 @@ import REPL.TerminalMenus: request
 
 export menu, quiktest # for now
 
-head = "Press {bold gold1}t{/bold gold1} for test (✅), {bold gold1}s{/bold gold1} for snapshot (📸), {bold gold1}g{/bold gold1} for garbage (🗑 ), {bold gold1}G{/bold gold1} to clear"
-header = apply_style(head)
-const settings::Vector{Char} = ['t', 's', 'g']
-const icons::Vector{String} = ["✅", "📸", "🗑 "]
+head = ("[{bold gold1}k{/bold gold1}]eep (🧿), [{bold gold1}t{/bold gold1}]est (✅), [{bold gold1}s{/bold gold1}]napshot (📸), [{bold gold1}g{/bold gold1}]arbage (🗑 )",
+       "[{bold gold1}U{/bold gold1}]p, [{bold gold1}D{/bold gold1}]own, {bold gold1}G{/bold gold1} to clear")
+const header = apply_style(join(head, "\n"))
+const settings::Vector{Char} = ['k', 't', 's', 'g']
+const icons::Vector{String} = ["🧿", "✅", "📸", "🗑 "]
 
 function onkey(menu::ToggleMenu, i::UInt32)
+    options, selections = menu.options, menu.selections
     if Char(i) == 'G'
-        selected = copy(menu.selections)
+        selected = copy(selections)
         removals = []
-        for (idx, selected) in menu.selections |> enumerate
+        for (idx, selected) in selections |> enumerate
             if selected == 'g'
                 push!(removals, idx)
                 push!(removals, idx + 1)
             end
         end
         for remove in reverse(removals)
-            deleteat!(menu.options, remove)
-            deleteat!(menu.selections, remove)
+            deleteat!(options, remove)
+            deleteat!(selections, remove)
         end
         for _ = 1:length(removals)
-            push!(menu.options, "")
-            push!(menu.selections, '\0')
+            push!(options, "")
+            push!(selections, '\0')
         end
+    # TODO get the indexing right on these
+    elseif Char(i) == 'U'
+        c = menu.cursor
+        c == 1 && return false
+        options[c], options[c-2] = options[c-2], options[c]
+        selections[c], selections[c-2] = selections[c-2], selections[c]
+        options[c+1], options[c-1] = options[c-1], options[c+1]
+        selections[c+1], selections[c-1] = selections[c-1], selections[c+1]
+    elseif Char(i) == 'D'
+        c = menu.cursor
+        if c + 3 > length(options) || c + 2 ≤ length(options) && options[c+2] == ""
+            return false
+        end
+        options[c], options[c+2] = options[c+2], options[c]
+        selections[c], selections[c+2] = selections[c+2], selections[c]
+        options[c+1], options[c+3] = options[c+3], options[c+1]
+        selections[c+1], selections[c+3] = selections[c+1], selections[c+3]
     end
-    if isempty(menu.options)
-        return true
-    else
-        return false
-    end
+    return false
 end
 
 menu = ToggleMenuMaker(header, settings, icons, keypress=onkey)
@@ -100,7 +115,12 @@ function quiktest()
     for (line, answer, state) in zip(lines, answers, status)
         push!(options, highlight_syntax(line))
         if state == :answer
-            push!(selections, 't')
+            # cheap heuristic
+            if occursin(" = ", line)
+                push!(selections, 'k')
+            else
+                push!(selections, 't')
+            end
         else
             push!(selections, 'g')
         end
