@@ -13,7 +13,8 @@ makedocs(;
         assets=String[],
     ),
     pages=[
-        "Home" => "index.md",
+        "QuikTest" => "index.md",
+        "Docstrings" => "docstrings.md",
     ],
 )
 
