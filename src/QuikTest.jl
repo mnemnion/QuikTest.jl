@@ -1,22 +1,30 @@
 module QuikTest
 
 import InteractiveUtils: clipboard, subtypes
-import MacroTools: striplines
+import MacroTools: striplines, prewalk
 import REPL.TerminalMenus: request
 import Term: apply_style, highlight_syntax
 
 using ToggleMenus
 
-export menu, quiktest # for now
+export quiktest # for now
 
-head = ("[{bold gold1}k{/bold gold1}]eep (🧿), [{bold gold1}t{/bold gold1}]est (✅), [{bold gold1}s{/bold gold1}]napshot (📸), t[{bold gold1}y{/bold gold1}]pe (🆔), [{bold gold1}j{/bold gold1}]unk (🗑 ), [{bold gold1}e{/bold gold1}]rror test (❌), [{bold gold1}b{/bold gold1}]roken (⚠️)",
-       "[{bold gold1}U{/bold gold1}]p, [{bold gold1}D{/bold gold1}]own, {bold gold1}J{/bold gold1} to clear")
-const header = apply_style(join(head, "\n"))
-const settings::Vector{Char} = ['k', 't', 's', 'y', 'j', 'e', 'b']
-const icons::Vector{String} = ["🧿", "✅", "📸", "🆔","🗑 ", "❌", "⚠️"]
+hl(c::Union{Char,String}) = "[{bold gold1}$c{/bold gold1}]"
+ico(i::Integer) = settings === icons ? "" : " ($(icons[i]))"
+
+settings::Vector{Char} = ['k', 't', 's', 'y', 'j', 'e', 'b']
+if haskey(ENV, "QUIKTEST_NO_EMOJI")
+    icons = settings
+else
+    icons::Vector{String} = ["🧿", "✅", "📸", "🆔","🗑 ", "❌", "⚠️"]
+end
+
+head = ("$(hl('k'))eep$(ico(1)), $(hl('t'))est$(ico(2)), $(hl('s'))napshot$(ico(3)), t$(hl('y'))pe$(ico(4)), $(hl('j'))unk$(ico(5)), $(hl('e'))rror test$(ico(6)), [$(hl('b'))roken$(ico(7))",
+       "Move lines $(hl('U'))p or $(hl('D'))own, {$(hl('J')) to clear, $(hl("Enter")) to accept, $(hl('q')) to quit")
+header = apply_style(join(head, "\n"))
 
 # A QuikTest local module to hold test modules. A module module, one might say.
-const modmod = eval(:(module $(gensym()) end))
+baremodule ModMod end
 
 function onkey(menu::ToggleMenu, i::UInt32)
     options, selections = menu.options, menu.selections
@@ -60,8 +68,15 @@ function onkey(menu::ToggleMenu, i::UInt32)
     return false
 end
 
-menu = ToggleMenuMaker(header, settings, icons, 20, keypress=onkey)
+const menu = ToggleMenuMaker(header, settings, icons, 20, keypress=onkey)
 
+"""
+    make_test_module(main::Module)
+
+Prepare an anonymous test module `using`` the module names defined in `main`.
+If an expr named `QUIKTEST_PREFACE` is found in the module, this will also
+be evaluated.  The module is then returned.
+"""
 function make_test_module(main::Module)
     # TODO we use this twice and it's expensive, we should cache it
     module_names = Symbol[]
@@ -73,7 +88,7 @@ function make_test_module(main::Module)
             end
         end
     end
-    test_mod = Base.eval(modmod, :(module $(gensym()) end))
+    test_mod = Base.eval(ModMod, :(module $(gensym()) end))
     # Import existing module names on a best-effort basis
     for name in module_names
         try Base.eval(test_mod, :(using $(name)))
@@ -93,8 +108,33 @@ function make_test_module(main::Module)
     return test_mod
 end
 
+function calls_quiktest(str)
+    try
+        expr = Meta.parse(str)
+        hasit = false
+        prewalk(expr) do ex
+            if ex isa Expr && ex.head == :call && expr.args[1] == :quiktest
+                hasit = true
+            end
+        end
+        return hasit
+    catch e
+        return false
+    end
+end
+
+function has_assignment(line)
+    expr = Meta.parse(line) # We already know this doesn't throw an error
+    hasit = false
+    prewalk(expr) do ex
+        if ex isa Expr && ex.head == :(=)
+            hasit = true
+        end
+    end
+    return hasit
+end
+
 function _quiktest(numlines::Integer, stop::Integer)
-    !isinteractive() && error("Julia must be in interactive mode")
     numlines = abs(numlines)
     hist = Base.active_repl.mistate.current_mode.hist
     history = hist.history
@@ -102,7 +142,7 @@ function _quiktest(numlines::Integer, stop::Integer)
     lines = String[]
     count = 0
     for i = length(history)-1:-1:1
-        if !occursin("quiktest(", history[i]) && modes[i] == :julia
+        if modes[i] == :julia && !calls_quiktest(history[i])
             push!(lines, history[i])
             count += 1
         end
@@ -111,8 +151,6 @@ function _quiktest(numlines::Integer, stop::Integer)
         end
     end
     reverse!(lines)
-    println("lines:")
-    println(lines...)
     answers = []
     status = []
     main = Base.active_repl.mistate.active_module
@@ -140,7 +178,7 @@ function _quiktest(numlines::Integer, stop::Integer)
         push!(options, hl)
         if state == :answer
             # cheap heuristic
-            if occursin(" = ", line)
+            if has_assignment(line)
                 push!(selections, 'k')
             else
                 push!(selections, 't')
@@ -199,10 +237,19 @@ function prepare_test(returned::Vector{Tuple{Char,String}}, line_dict::Dict{Stri
     return tcount, join(tests)
 end
 
+"""
+    quiktest(), quicktest(n::Integer)
+
+Interactively launch a menu to make tests out of recent REPL history.
+
+Called with no arguments, this will include the entire history of the current
+session.  Called with an integer, it will include only that many of the most
+recent lines.
+"""
 function quiktest()
     !isinteractive() && error("Julia must be in interactive mode")
     hist = Base.active_repl.mistate.current_mode.hist
-    _quiktest(typemax(Int64), hist.start_idx)
+    _quiktest(typemax(Int64), hist.start_idx + 1)
 end
 
 function quiktest(n::Integer)
@@ -242,9 +289,9 @@ function _typetestify(mod::Module, e_str::AbstractString)
     catch err
         @warn "unexpected error in: $e_str"
         if err isa LoadError
-            return "# unexpected error: " * string(striplines(:(@test_throws $(wrong_error(err)) eval($expr))))
+            return "# unexpected error: # " * string(striplines(:(@test_throws $(wrong_error(err)) eval($expr))))
         else
-            return "# unexpected error: " * string(striplines(:(@test_throws $(wrong_error(err)) $expr)))
+            return "# unexpected error: # " * string(striplines(:(@test_throws $(wrong_error(err)) $expr)))
         end
     end
     string(striplines(:(@test $expr isa Union{}))) * " # $(typeof(ans))"
