@@ -9,11 +9,14 @@ using ToggleMenus
 
 export menu, quiktest # for now
 
-head = ("[{bold gold1}k{/bold gold1}]eep (🧿), [{bold gold1}t{/bold gold1}]est (✅), [{bold gold1}s{/bold gold1}]napshot (📸), [{bold gold1}j{/bold gold1}]unk (🗑 ), [{bold gold1}e{/bold gold1}]rror test (❗️), [{bold gold1}b{/bold gold1}]roken (⚠️)",
+head = ("[{bold gold1}k{/bold gold1}]eep (🧿), [{bold gold1}t{/bold gold1}]est (✅), [{bold gold1}s{/bold gold1}]napshot (📸), t[{bold gold1}y{/bold gold1}]pe (🆔), [{bold gold1}j{/bold gold1}]unk (🗑 ), [{bold gold1}e{/bold gold1}]rror test (❌), [{bold gold1}b{/bold gold1}]roken (⚠️)",
        "[{bold gold1}U{/bold gold1}]p, [{bold gold1}D{/bold gold1}]own, {bold gold1}J{/bold gold1} to clear")
 const header = apply_style(join(head, "\n"))
-const settings::Vector{Char} = ['k', 't', 's', 'j', 'e', 'b']
-const icons::Vector{String} = ["🧿", "✅", "📸", "🗑 ", "❗️", "⚠️"]
+const settings::Vector{Char} = ['k', 't', 's', 'y', 'j', 'e', 'b']
+const icons::Vector{String} = ["🧿", "✅", "📸", "🆔","🗑 ", "❌", "⚠️"]
+
+# A QuikTest local module to hold test modules. A module module, one might say.
+const modmod = eval(:(module $(gensym()) end))
 
 function onkey(menu::ToggleMenu, i::UInt32)
     options, selections = menu.options, menu.selections
@@ -38,6 +41,7 @@ function onkey(menu::ToggleMenu, i::UInt32)
     elseif Char(i) == 'U'
         c = menu.cursor
         c == 1 && return false
+        # Move both the code line and the result line up
         options[c], options[c-2] = options[c-2], options[c]
         selections[c], selections[c-2] = selections[c-2], selections[c]
         options[c+1], options[c-1] = options[c-1], options[c+1]
@@ -47,6 +51,7 @@ function onkey(menu::ToggleMenu, i::UInt32)
         if c + 3 > length(options) || c + 2 ≤ length(options) && options[c+2] == ""
             return false
         end
+        # Move both the code line and the result line down
         options[c], options[c+2] = options[c+2], options[c]
         selections[c], selections[c+2] = selections[c+2], selections[c]
         options[c+1], options[c+3] = options[c+3], options[c+1]
@@ -68,7 +73,7 @@ function make_test_module(main::Module)
             end
         end
     end
-    test_mod = Base.eval(main, :(module $(gensym()) end))
+    test_mod = Base.eval(modmod, :(module $(gensym()) end))
     # Import existing module names on a best-effort basis
     for name in module_names
         try Base.eval(test_mod, :(using $(name)))
@@ -79,10 +84,11 @@ function make_test_module(main::Module)
         preface = Base.eval(main, :(QUIKTEST_PREFACE))
         try
             Base.eval(test_mod, preface)
-        catch e
+        catch e  # An error in QUIKTEST_PREFACE
             @warn show(e)
         end
     catch e
+        # QUIKTEST_PREFACE may not exist, this is fine
     end
     return test_mod
 end
@@ -184,6 +190,8 @@ function prepare_test(returned::Vector{Tuple{Char,String}}, line_dict::Dict{Stri
             push!(tests, pad, _snaptestify(ans_mod, line), "\n")
         elseif state == 'e'
             push!(tests, pad, _errtestify(ans_mod, line), "\n")
+        elseif state == 'y'
+            push!(tests, pad, _typetestify(ans_mod, line), "\n")
         elseif state == 'b'
             push!(tests, pad, _broketestify(ans_mod, line), "\n")
         end
@@ -204,7 +212,7 @@ end
 # Helper functions
 
 function _quieteval(mod::Module, line::AbstractString)
-    Base.redirect_stdout(devnull) do
+    Base.redirect_stdio(stdout=devnull, stderr=devnull) do
         return Base.eval(mod, Meta.parse(line))
     end
 end
@@ -225,6 +233,21 @@ function _testify(mod::Module, e_str::AbstractString)
         ans = QuoteNode(ans)
     end
     string(striplines(:(@test $expr != $ans)))
+end
+
+function _typetestify(mod::Module, e_str::AbstractString)
+    expr = (Meta.parse(e_str))
+    ans = try
+        Base.eval(mod, expr)
+    catch err
+        @warn "unexpected error in: $e_str"
+        if err isa LoadError
+            return "# unexpected error: " * string(striplines(:(@test_throws $(wrong_error(err)) eval($expr))))
+        else
+            return "# unexpected error: " * string(striplines(:(@test_throws $(wrong_error(err)) $expr)))
+        end
+    end
+    string(striplines(:(@test $expr isa Union{}))) * " # $(typeof(ans))"
 end
 
 function _broketestify(mod::Module, e_str::AbstractString)
