@@ -80,7 +80,7 @@ function make_test_module(main::Module)
         try
             Base.eval(test_mod, preface)
         catch e
-            @warn showerror(e)
+            @warn show(e)
         end
     catch e
     end
@@ -158,7 +158,7 @@ end
 
 function prepare_test(returned::Vector{Tuple{Char,String}}, line_dict::Dict{String,String}, main::Module)
     if all(x -> x[1] == '\0', returned)
-        return nothing
+        return 0, nothing
     end
     tests = String[]
     ans_mod = make_test_module(main)
@@ -184,6 +184,8 @@ function prepare_test(returned::Vector{Tuple{Char,String}}, line_dict::Dict{Stri
             push!(tests, pad, _snaptestify(ans_mod, line), "\n")
         elseif state == 'e'
             push!(tests, pad, _errtestify(ans_mod, line), "\n")
+        elseif state == 'b'
+            push!(tests, pad, _broketestify(ans_mod, line), "\n")
         end
     end
     return tcount, join(tests)
@@ -201,6 +203,12 @@ end
 
 # Helper functions
 
+function _quieteval(mod::Module, line::AbstractString)
+    Base.redirect_stdout(devnull) do
+        return Base.eval(mod, Meta.parse(line))
+    end
+end
+
 function _testify(mod::Module, e_str::AbstractString)
     expr = (Meta.parse(e_str))
     ans = try
@@ -216,7 +224,24 @@ function _testify(mod::Module, e_str::AbstractString)
     if ans isa Symbol
         ans = QuoteNode(ans)
     end
-    string(striplines(:(@test $expr !== $ans)))
+    string(striplines(:(@test $expr != $ans)))
+end
+
+function _broketestify(mod::Module, e_str::AbstractString)
+    expr = (Meta.parse(e_str))
+    ans = try
+        Base.eval(mod, expr)
+    catch err
+        if err isa LoadError
+            return string(striplines(:(@test_broken true || eval($expr))))
+        else
+            return string(striplines(:(@test_broken true || $expr)))
+        end
+    end
+    if ans isa Symbol
+        ans = QuoteNode(ans)
+    end
+    string(striplines(:(@test_broken $expr == $ans)))
 end
 
 function _errtestify(mod::Module, e_str::AbstractString)
@@ -224,7 +249,7 @@ function _errtestify(mod::Module, e_str::AbstractString)
     try
         ans = Base.eval(mod, expr)
         @warn "no error in: $e_str"
-        return "# No error: " * string(striplines(:(@test $expr !== $ans)))
+        return "# No error: " * string(striplines(:(@test $expr != $ans)))
     catch err
         return _errorize(err, expr)
     end
