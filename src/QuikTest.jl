@@ -26,6 +26,12 @@ header = apply_style(join(head, "\n"))
 # A QuikTest local module to hold test modules. A module module, one might say.
 baremodule ModMod end
 
+"""
+    onkey(menu::ToggleMenu, i::UInt32)
+
+The `keypress` method for the QuikTest `ToggleMenu`.  Performs all necessary
+actions in response to user input.
+"""
 function onkey(menu::ToggleMenu, i::UInt32)
     options, selections = menu.options, menu.selections
     if Char(i) == 'J'
@@ -41,24 +47,23 @@ function onkey(menu::ToggleMenu, i::UInt32)
             deleteat!(options, remove)
             deleteat!(selections, remove)
         end
-        for _ = 1:length(removals)
-            push!(options, "")
-            push!(selections, '\0')
-        end
-    # TODO get the indexing right on these
+        menu.cursor[] = 1
+        menu.pageoffset = 0
     elseif Char(i) == 'U'
-        c = menu.cursor
-        c == 1 && return false
+        c = menu.cursor[]
+        c ≤ 2 && return false  # 2 not a valid cursor position but things happen
+        menu.cursor[] = c - 2
         # Move both the code line and the result line up
         options[c], options[c-2] = options[c-2], options[c]
         selections[c], selections[c-2] = selections[c-2], selections[c]
         options[c+1], options[c-1] = options[c-1], options[c+1]
         selections[c+1], selections[c-1] = selections[c-1], selections[c+1]
     elseif Char(i) == 'D'
-        c = menu.cursor
+        c = menu.cursor[]
         if c + 3 > length(options) || c + 2 ≤ length(options) && options[c+2] == ""
             return false
         end
+        menu.cursor[] = c + 2
         # Move both the code line and the result line down
         options[c], options[c+2] = options[c+2], options[c]
         selections[c], selections[c+2] = selections[c+2], selections[c]
@@ -68,12 +73,12 @@ function onkey(menu::ToggleMenu, i::UInt32)
     return false
 end
 
-const menu = ToggleMenuMaker(header, settings, icons, 20, keypress=onkey)
+const menu = ToggleMenuMaker(header, settings, icons, 20, keypress=onkey, scroll_wrap=true)
 
 """
     make_test_module(main::Module)
 
-Prepare an anonymous test module `using`` the module names defined in `main`.
+Prepare an anonymous test module `using` the module names defined in `main`.
 If an expr named `QUIKTEST_PREFACE` is found in the module, this will also
 be evaluated.  The module is then returned.
 """
@@ -108,9 +113,14 @@ function make_test_module(main::Module)
     return test_mod
 end
 
-function calls_quiktest(str)
+"""
+    calls_quiktest(line)
+
+Parses the line to determine if it calls quiktest.
+"""
+function calls_quiktest(line)
     try
-        expr = Meta.parse(str)
+        expr = Meta.parse(line)
         hasit = false
         prewalk(expr) do ex
             if ex isa Expr && ex.head == :call && expr.args[1] == :quiktest
@@ -123,11 +133,17 @@ function calls_quiktest(str)
     end
 end
 
+"""
+    has_assignment(line)
+
+Parses the line to determine if it has an assignment expression,
+or defines a function.
+"""
 function has_assignment(line)
     expr = Meta.parse(line) # We already know this doesn't throw an error
     hasit = false
     prewalk(expr) do ex
-        if ex isa Expr && ex.head == :(=)
+        if ex isa Expr && (ex.head == :(=) || ex.head == :function)
             hasit = true
         end
     end
@@ -160,7 +176,7 @@ function _quiktest(numlines::Integer, stop::Integer)
         # TODO add lookahead, parse and look for 'ans'
         # if we find it, this line is "ans = " * line
         try
-            ans = Base.eval(test_mod, Meta.parse(line))
+            ans = quieteval(test_mod, Meta.parse(line))
             push!(answers, string(ans))
             push!(status, :answer)
         catch e
@@ -207,6 +223,7 @@ function prepare_test(returned::Vector{Tuple{Char,String}}, line_dict::Dict{Stri
     tests = String[]
     ans_mod = make_test_module(main)
     pad = "        "
+    nlpad = "\n" * pad
     tcount = 0
     for (state, hi_line) in returned
         if state == '\0' || state == 'j'
@@ -214,28 +231,40 @@ function prepare_test(returned::Vector{Tuple{Char,String}}, line_dict::Dict{Stri
         end
         tcount += 1
         line = line_dict[hi_line]
+        # TODO each of the testifiers needs a careful pass to handle edge cases and
+        # decide on a consistent strategy to determine the exception.  Specifically,
+        # do we write the test which the result implies, or do we write a stand-in for
+        # the result the user requested?
         if state == 'k'
             try
-                Base.eval(ans_mod, Meta.parse(line))
-                push!(tests, pad, line, "\n")
+                quieteval(ans_mod, Meta.parse(line))
+                str = replace(line, "\n" => nlpad)
+                push!(tests, pad, str, "\n")
             catch _
                 @warn "this line errors: $line"
-                push!(tests, pad, "# error in: " * line, "\n")
+                push!(tests, pad, "#= error in: " * line, "\n=#")
             end
         elseif state == 't'
-            push!(tests, pad, _testify(ans_mod, line), "\n")
+            str = replace(testify(ans_mod, line), "\n" => nlpad)
+            push!(tests, pad, str , "\n")
         elseif state == 's'
-            push!(tests, pad, _snaptestify(ans_mod, line), "\n")
+            str = replace(snaptestify(ans_mod, line), "\n" => nlpad)
+            push!(tests, pad, str, "\n")
         elseif state == 'e'
-            push!(tests, pad, _errtestify(ans_mod, line), "\n")
+            str = replace(errtestify(ans_mod, line), "\n" => nlpad)
+            push!(tests, pad, str, "\n")
         elseif state == 'y'
-            push!(tests, pad, _typetestify(ans_mod, line), "\n")
+            str = replace(typetestify(ans_mod, line), "\n" => nlpad)
+            push!(tests, pad, str, "\n")
         elseif state == 'b'
-            push!(tests, pad, _broketestify(ans_mod, line), "\n")
+            str = replace(broketestify(ans_mod, line), "\n" => nlpad)
+            push!(tests, pad, str, "\n")
         end
     end
     return tcount, join(tests)
 end
+
+
 
 """
     quiktest(), quicktest(n::Integer)
@@ -258,52 +287,78 @@ end
 
 # Helper functions
 
-function _quieteval(mod::Module, line::AbstractString)
+"""
+    quieteval(mod::Module, expr)
+
+Evaluate `expr` in `mod` while redirecting `stdout` and `stderr`
+to `devnull`.
+"""
+function quieteval(mod::Module, expr)
     Base.redirect_stdio(stdout=devnull, stderr=devnull) do
-        return Base.eval(mod, Meta.parse(line))
+        return Base.eval(mod, expr)
     end
 end
 
-function _testify(mod::Module, e_str::AbstractString)
+stripstring(e) = string(striplines(e))
+
+# Placeholder symbol, we need this to splice comments into test strings
+const holdsym = :🤔✅🧿😅λ
+const holdstr = String(holdsym)
+
+function testify(mod::Module, e_str::AbstractString)
     expr = (Meta.parse(e_str))
     ans = try
-        Base.eval(mod, expr)
+        quieteval(mod, expr)
     catch err
         @warn "unexpected error in: $e_str"
         if err isa LoadError
-            return "# unexpected error: " * string(striplines(:(@test_throws $(wrong_error(err)) eval($expr))))
+            wrong_str = wrong_error(err)
+            comment =  "#= unexpected error: # " * stripstring(:(@test_throws $holdsym @eval $expr)) * "\n# =#"
+            return replace(comment, holdstr => wrong_str)
         else
-            return "# unexpected error: " * string(striplines(:(@test_throws $(wrong_error(err)) $expr)))
+            wrong_str = wrong_error(err)
+            comment = "#= unexpected error: # " * stripstring(:(@test_throws $(wrong_error(err)) $expr)) * "\n# =#"
+            return replace(comment, holdstr => wrong_str)
         end
     end
     if ans isa Symbol
         ans = QuoteNode(ans)
     end
-    string(striplines(:(@test $expr != $ans)))
+    # TODO turn ans into a string, parse it, paste this into an Expr :($ans = $str_ans),
+    # and evaluate that to determine if the test will pass once the fail-slug is removed.
+    if ans != false
+        return stripstring(:(@test $expr == false)) * " # " * stripstring(:($ans))
+    else
+        return stripstring(:(@test $expr == true)) * " # false"
+    end
 end
 
-function _typetestify(mod::Module, e_str::AbstractString)
+function typetestify(mod::Module, e_str::AbstractString)
     expr = (Meta.parse(e_str))
     ans = try
-        Base.eval(mod, expr)
+        quieteval(mod, expr)
     catch err
-        @warn "unexpected error in: $e_str"
+        @warn "Can't test type due to error in: $e_str\n    $err"
         if err isa LoadError
-            return "# unexpected error: # " * string(striplines(:(@test_throws $(wrong_error(err)) eval($expr))))
+            wrong_str = wrong_error(err)
+            comment = "#= unexpected error: # " * string(striplines(:(@test_throws $holdsym @eval $expr))) * "\n# =#"
+            return replace(comment, holdstr => wrong_str)
         else
-            return "# unexpected error: # " * string(striplines(:(@test_throws $(wrong_error(err)) $expr)))
+            wrong_str = wrong_error(err)
+            comment = "#= unexpected error: # " * string(striplines(:(@test_throws $holdsym $expr))) * "\n# =#"
+            return replace(comment, holdstr => wrong_str)
         end
     end
     string(striplines(:(@test $expr isa Union{}))) * " # $(typeof(ans))"
 end
 
-function _broketestify(mod::Module, e_str::AbstractString)
+function broketestify(mod::Module, e_str::AbstractString)
     expr = (Meta.parse(e_str))
     ans = try
-        Base.eval(mod, expr)
+        quieteval(mod, expr)
     catch err
         if err isa LoadError
-            return string(striplines(:(@test_broken true || eval($expr))))
+            return string(striplines(:(@test_broken true || @eval $expr)))
         else
             return string(striplines(:(@test_broken true || $expr)))
         end
@@ -314,60 +369,53 @@ function _broketestify(mod::Module, e_str::AbstractString)
     string(striplines(:(@test_broken $expr == $ans)))
 end
 
-function _errtestify(mod::Module, e_str::AbstractString)
+function errtestify(mod::Module, e_str::AbstractString)
     expr = Meta.parse(e_str)
     try
-        ans = Base.eval(mod, expr)
+        ans = quieteval(mod, expr)
         @warn "no error in: $e_str"
-        return "# No error: " * string(striplines(:(@test $expr != $ans)))
+        wrong = ans == false ? true : false
+        return "#= No error: # " * stringstrip(:(@test $expr == $wrong)) * " # " * stringstrip(:($ans)) * "\n# =#"
     catch err
         return _errorize(err, expr)
     end
 end
 
-function _snaptestify(mod::Module, e_str::AbstractString)
+function snaptestify(mod::Module, e_str::AbstractString)
     expr = Meta.parse(e_str)
     ans = try
-        Base.eval(mod, expr)
+        quieteval(mod, expr)
     catch err
         @warn "can't snaptest an error, throws $(typeof(err)): $e_str"
-        return "# Unexpected error: " * _errorize(ans, err)
+        return "#= Unexpected error: " * _errorize(ans, err) * "\n=#"
     end
     if ans isa AbstractString
         ans_str = ans
     else
         ans_str = repr(ans)
     end
-    string(striplines(:(@test repr($expr) == "snap!" * $ans_str)))
-end
-
-errdict = Dict()
-
-function allsubtypes(T::Any, v=[])
-    push!(v, T)
-    for U in subtypes(T)
-        allsubtypes(U, v)
-    end
-    return v
-end
-
-let errvec = collect(allsubtypes(Exception))
-    errdict[errvec[begin]] = errvec[end]
-    for i = Iterators.drop(eachindex(errvec), 1)
-        errdict[errvec[i]] = errvec[i-1]
-    end
+    string(striplines(:(@test repr($expr) == "📸" * $ans_str)))
 end
 
 function wrong_error(e::Exception)
-    return errdict[typeof(e)]
+    if e isa LoadError
+        wrong = "SegmentationFault"
+    else
+        wrong = "LoadError"
+    end
+    return "#= $(typeof(e)) =# $wrong"
 end
 
+
+
 function _errorize(err::Exception, expr)
+    wrong_str = wrong_error(err)
     if err isa LoadError
-        return string(striplines(:(@test_throws $(wrong_error(err)) eval($expr))))
+        errtest = string(striplines(:(@test_throws $holdsym @eval $expr)))
     else
-        return string(striplines(:(@test_throws $(wrong_error(err)) $expr)))
+        errtest =string(striplines(:(@test_throws $holdsym $expr)))
     end
+    return replace(errtest, holdstr => wrong_str)
 end
 
 end  # module QuikTest
