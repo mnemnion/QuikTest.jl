@@ -7,7 +7,6 @@
 ## Roadmap
 
 - [ ]  Evaluate `answer == eval(parse(answer))`, mark tests which don't pass
-- [ ]  Interactive picker with suffix completion (this is its own package)
-- [ ]  [S]plit and [R]efine commands
-- [ ]  Make .header a function that checks .aux to see if the menu needs pruning and
-       does so when it becomes safe.
+- [ ]  It turns out you can pass a cursor Ref to `request`, so that can be attached to
+       the .aux field and used to move the cursor around for up/down, and rescue it from
+       limbo when lines are junked.
