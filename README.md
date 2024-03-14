@@ -6,7 +6,19 @@
 
 ## Roadmap
 
-- [ ]  Evaluate `answer == eval(parse(answer))`, mark tests which don't pass
-- [ ]  It turns out you can pass a cursor Ref to `request`, so that can be attached to
-       the .aux field and used to move the cursor around for up/down, and rescue it from
-       limbo when lines are junked.
+- [X]  Evaluate `answer == eval(parse(answer))`, mark tests which don't pass
+- [ ]  Factor the mega-functions into bite-size pieces, which can be tested,
+       and used in the documentation.
+- [ ]  Add `[C]lone` to duplicate a line and its results.
+
+- [ ]  Erroneous result protocol:
+  - [X]  A test, snaptest, or typetest, which throws an error, becomes a comment
+         with an error test
+  - [X]  A test which doesn't compare equal with its result becomes a comment with
+         a snaptest.
+  - [X]  An error test which returns a value becomes a comment with:
+    - [X]  If the value is a Type, type test
+    - [X]  If the value compares equal, a test
+    - [X]  If it does not compare equal, a snaptest
+
+All of these, of course, fail.

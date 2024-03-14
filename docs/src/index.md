@@ -123,9 +123,10 @@ directly by pressing the highlighted letter for that state.
   - 📸 **'s'**:  A snapshot test.  This compares the _repr_ of the test line to a
           string of its current return value.  This sort of test can be brittle, but
           is correct for testing the repr itself, and can be expedient under other
-          circumstances.
-  - 🆔 **'y'**:  A type test.  The result of the line is compared to the type of the result
-          using `isa`.
+          circumstances. This uses three-argument show, which is to say, the result
+          compared against is exactly what you will see at the REPL.
+  - 🆔 **'y'**:  A type test.  The result of the line is compared to the type of the
+          result using `isa`.
   - 🗑 **'j'**:  Junk the line, that is, do not include it in the test.  This is the default
           for lines which throw errors.  If you want to test for the error, use:
   - ❌ **'e'**:  Error test.  A `@test_throws` test is generated, which tests against the
