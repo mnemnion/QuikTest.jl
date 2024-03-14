@@ -1,3 +1,10 @@
+"""
+   QuikTest 
+
+It's quick! It tests! It's **QuikTest**.
+
+See [`quiktest`](@ref) for more.
+"""
 module QuikTest
 
 import InteractiveUtils: clipboard, subtypes
@@ -13,6 +20,7 @@ hl(c::Union{Char,String}) = "[{bold gold1}$c{/bold gold1}]"
 ico(i::Integer) = settings === icons ? "" : " ($(icons[i]))"
 
 settings::Vector{Char} = ['k', 't', 's', 'y', 'j', 'e', 'b']
+
 if haskey(ENV, "QUIKTEST_NO_EMOJI")
     icons = settings
 else
@@ -73,7 +81,8 @@ function onkey(menu::ToggleMenu, i::UInt32)
     return false
 end
 
-const menu = ToggleMenuMaker(header, settings, icons, 20, keypress=onkey, scroll_wrap=true)
+const menu = ToggleMenuMaker(header, settings, icons, 20;
+                             keypress=onkey, charset=:unicode, scroll_wrap=true)
 
 """
     make_test_module(main::Module)
@@ -272,8 +281,14 @@ end
 Interactively launch a menu to make tests out of recent REPL history.
 
 Called with no arguments, this will include the entire history of the current
-session.  Called with an integer, it will include only that many of the most
+session. Called with an integer, it will include only that many of the most
 recent lines.
+
+When `quiktest` exits, unless canceled, it will generate _failing_ tests, on a
+best-effort basis, and copy them to your clipboard.  They will also be saved
+in the variable `latest_test`, as insurance against the vicissitudes of life.
+
+**がんばって! ٩(◕‿◕)۶**
 """
 function quiktest()
     !isinteractive() && error("Julia must be in interactive mode")
@@ -299,6 +314,32 @@ function quieteval(mod::Module, expr)
     end
 end
 
+
+"""
+    compares_equal(mod::Module, ans::Any)
+
+    Checks if the stringified `repr` of `ans` is `==` to the repr itself.
+This confirms that the test is valid.
+"""
+function compares_equal(mod::Module, ans::Any)
+    ans_expr = Meta.parse(stripstring(:($ans)))
+    return Base.eval(mod, :($ans == $ans_expr))
+end
+
+"""
+    wrap_comment(test_str::String)
+
+Wrap `test_str` in a comment, whether single or multi-line.
+"""
+function wrap_comment(test_str::String)
+    nl = findfirst('\n', test_str)
+    if nl !== nothing
+        return " #= " * test_str * "\n=#"
+    else
+        return " # " * test_str
+    end
+end
+
 stripstring(e) = string(striplines(e))
 
 # Placeholder symbol, we need this to splice comments into test strings
@@ -313,23 +354,33 @@ function testify(mod::Module, e_str::AbstractString)
         @warn "unexpected error in: $e_str"
         if err isa LoadError
             wrong_str = wrong_error(err)
-            comment =  "#= unexpected error: # " * stripstring(:(@test_throws $holdsym @eval $expr)) * "\n# =#"
+            comment =  "# test throws load error:" * wrap_comment(stripstring(:(@test_throws $holdsym @eval $expr)))
             return replace(comment, holdstr => wrong_str)
         else
             wrong_str = wrong_error(err)
-            comment = "#= unexpected error: # " * stripstring(:(@test_throws $(wrong_error(err)) $expr)) * "\n# =#"
+            comment = "# test throws error:" * wrap_comment(stripstring(:(@test_throws $holdsym $expr)))
             return replace(comment, holdstr => wrong_str)
         end
     end
+    return test_for_ans(mod, expr, ans)
+end
+
+function test_for_ans(mod::Module, expr, ans)
     if ans isa Symbol
         ans = QuoteNode(ans)
     end
-    # TODO turn ans into a string, parse it, paste this into an Expr :($ans = $str_ans),
-    # and evaluate that to determine if the test will pass once the fail-slug is removed.
-    if ans != false
-        return stripstring(:(@test $expr == false)) * " # " * stripstring(:($ans))
-    else
-        return stripstring(:(@test $expr == true)) * " # false"
+    # Check if the result will be a valid test
+    ans_equals_ans = compares_equal(mod, ans)
+    if ans_equals_ans
+        if ans != false
+            return stripstring(:(@test $expr == false)) * wrap_comment(stripstring(:($ans)))
+        else
+            return stripstring(:(@test $expr == true)) * " # false"
+        end
+    else  # A string will never fail this test so repr it is
+        ans_str = repr("text/plain", ans)
+        snaptest = string(striplines(:(@test repr("text/plain", $expr) == "📸" * $ans_str)))
+        return "# test did not compare `==`:" * wrap_comment(snaptest)
     end
 end
 
@@ -341,15 +392,15 @@ function typetestify(mod::Module, e_str::AbstractString)
         @warn "Can't test type due to error in: $e_str\n    $err"
         if err isa LoadError
             wrong_str = wrong_error(err)
-            comment = "#= unexpected error: # " * string(striplines(:(@test_throws $holdsym @eval $expr))) * "\n# =#"
+            comment = "# type test throws load error:" * wrap_comment(string(striplines(:(@test_throws $holdsym @eval $expr))))
             return replace(comment, holdstr => wrong_str)
         else
             wrong_str = wrong_error(err)
-            comment = "#= unexpected error: # " * string(striplines(:(@test_throws $holdsym $expr))) * "\n# =#"
+            comment = "# type test throws error:" * wrap_comment(string(striplines(:(@test_throws $holdsym $expr))))
             return replace(comment, holdstr => wrong_str)
         end
     end
-    string(striplines(:(@test $expr isa Union{}))) * " # $(typeof(ans))"
+    string(striplines(:(@test $expr isa Union{}))) * wrap_comment("$(typeof(ans))")
 end
 
 function broketestify(mod::Module, e_str::AbstractString)
@@ -366,7 +417,12 @@ function broketestify(mod::Module, e_str::AbstractString)
     if ans isa Symbol
         ans = QuoteNode(ans)
     end
-    string(striplines(:(@test_broken $expr == $ans)))
+    ans_equals_ans = compares_equal(mod, ans)
+    if ans_equals_ans
+        return string(striplines(:(@test_broken $expr == $ans)))
+    else
+        return string(striplines(:(@test_broken $expr != $ans)))
+    end
 end
 
 function errtestify(mod::Module, e_str::AbstractString)
@@ -374,8 +430,7 @@ function errtestify(mod::Module, e_str::AbstractString)
     try
         ans = quieteval(mod, expr)
         @warn "no error in: $e_str"
-        wrong = ans == false ? true : false
-        return "#= No error: # " * stringstrip(:(@test $expr == $wrong)) * " # " * stringstrip(:($ans)) * "\n# =#"
+        return "# No error:" * wrap_comment(test_for_ans(mod, expr, ans))
     catch err
         return _errorize(err, expr)
     end
@@ -387,28 +442,28 @@ function snaptestify(mod::Module, e_str::AbstractString)
         quieteval(mod, expr)
     catch err
         @warn "can't snaptest an error, throws $(typeof(err)): $e_str"
-        return "#= Unexpected error: " * _errorize(ans, err) * "\n=#"
+        return "# Unexpected error in snaptest: # " * _errorize(err, expr)
     end
     if ans isa AbstractString
         ans_str = ans
     else
-        ans_str = repr(ans)
+        ans_str = repr("text/plain", ans)
     end
-    string(striplines(:(@test repr($expr) == "📸" * $ans_str)))
+    string(striplines(:(@test repr("text/plain", $expr) == "📸" * $ans_str)))
 end
 
-function wrong_error(e::Exception)
-    if e isa LoadError
+function wrong_error(err)
+    if err isa LoadError
         wrong = "SegmentationFault"
     else
         wrong = "LoadError"
     end
-    return "#= $(typeof(e)) =# $wrong"
+    return "#= $(typeof(err)) =# $wrong"
 end
 
 
 
-function _errorize(err::Exception, expr)
+function _errorize(err, expr)
     wrong_str = wrong_error(err)
     if err isa LoadError
         errtest = string(striplines(:(@test_throws $holdsym @eval $expr)))
