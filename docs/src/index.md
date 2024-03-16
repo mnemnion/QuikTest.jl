@@ -87,7 +87,10 @@ quiktest()
 
 Yes. QuikTest will never generate a test which will pass, if this happens, please file a bug.
 
-Instead, it will generate a failing test, structured so that it's easy (quick!) to turn this into a passing test, once the tests are run and the new tests are confirmed to fail.
+Instead, it will generate a failing test, structured so that it's easy (quick!) to
+turn this into a passing test, once the tests are run and the new tests are confirmed
+to fail.  These are designed such that the standard test framework will print the
+correct answer when it fails.
 
 #### Why Though?
 
@@ -101,21 +104,23 @@ test.  This is the Way.
 
 When `quiktest` is invoked, it launches a
 [ToggleMenu](https://github.com/mnemnion/ToggleMenus.jl), a TerminalMenu designed
-especially for QuikTest.  At start, any line which throw an error is marked as junk,
+especially for QuikTest.  At start, any line which throws an error is marked as junk,
 with a 🗑 emoji, a line with an assignment in it is marked 🧿 for keeping, and any
 other line is marked as a test, with ✅.  From there, you're free to change these
 defaults to any choice you would like.
 
 Basic navigation works like any other TerminalMenu: up and down arrows to move
-around, `PgUp` and `PgDown` to page, `q` to quit, `Enter` to exit the menu and create
-tests.  The tab key will toggle a line between states, or you can assign a state
-directly by pressing the highlighted letter for that state.
+around, `PgUp` and `PgDown` to page, `Home` and `End` for the top and bottom, `q` to
+quit, `Enter` to exit the menu and create tests.  The tab key will toggle a line
+between states, left and right arrows will cycle the state back and forward, or you
+can assign a state directly by pressing the highlighted letter for that state.
 
 ---
 
 - States:
   - 🧿 **'k'**:  Keeps the line, but doesn't make it into a test. Use this for lines
-          which set up state for subsequent tests.
+          which set up state for subsequent tests.  This is the default for assignments
+          and function definitions.
   - ✅ **'t'**:  An ordinary test.  The test will compare the line to its results, using
           `==`.  This is of necessity somewhat sensitive to the result of calling
           two-argument `show` on the result, as well as, of course, the definition of
@@ -127,8 +132,9 @@ directly by pressing the highlighted letter for that state.
           compared against is exactly what you will see at the REPL.
   - 🆔 **'y'**:  A type test.  The result of the line is compared to the type of the
           result using `isa`.
-  - 🗑 **'j'**:  Junk the line, that is, do not include it in the test.  This is the default
-          for lines which throw errors.  If you want to test for the error, use:
+  - 🗑 **'j'**:  Junk the line, that is, do not include it in the test.  This is the
+          default for lines which throw errors.  If you want to test for the error,
+          use:
   - ❌ **'e'**:  Error test.  A `@test_throws` test is generated, which tests against the
           `Exception` type thrown by the line.
   - ⚠️ **'b'**:  A broken test.  Creates a `@test_broken`. Like any QuikTest test, this
@@ -147,8 +153,7 @@ directly by pressing the highlighted letter for that state.
   - **J**:  Removes all junk lines from the menu.  This may be called at any time to
           clear up unwanted lines, so you can focus on the remaining lines of interest.
           This will do the right thing even if you junk all the lines in the menu,
-          although there is never a reason to do this.  If your cursor gets stranded,
-          either up or down will move it back to a valid line.
+          although there is never a reason to do this.
 
 ---
 
@@ -180,13 +185,14 @@ by deleting some part of the test as provided; what must be removed will be obvi
 This is accomplished by creating another module, into which the remaining lines are
 evaluated, in the order they appear when the menu is exited.
 
-If, for any reason, QuikTest is unable to generate a test which *will* pass once
-modified, it will include a comment instead, with some information about the problem,
-and a best-effort test string which resembles what was asked for.  It will also warn
-you of this occurence.  This can happen if an ordinary test is requested for a line
-which throws an error, or if an error test is requested for a line which doesn't
-throw one, or if, after stringulation, the value of a result is not `==` to the
-result itself.
+If, for any reason, QuikTest is unable to generate a test which _will_ pass once
+modified, it will issue a warning, and generate a comment.   This can happen if an
+ordinary test is requested for a line which throws an error, or if an error test is
+requested for a line which doesn't throw one, or if, after stringulation, the value
+of a result is not `==` to the result itself.  The comment will include a test
+(failing of course) which _would_ be valid for the line: for instance, if an ordinary
+test throws an error, the commented-out test will use `@test_throws`, or if the answer
+(after being stringified) doesn't `==` the expression, a snaptest will be generated.
 
 These comment lines may simply be removed, or the test portion tweaked into something
 correct.  Or leave them as a placeholder while you fix whatever caused it to be
@@ -199,6 +205,79 @@ clipboard` will put it right back.
 The workflow from there is to paste the tests into a testset, run the tests to
 confirm that they fail, and do a bit of targeted deletion to make them green.  Bob is
 now your proverbial uncle.
+
+## Tips
+
+**QuikTest** really is designed for quick tests.  The smooth workflow is, as soon as
+you see behavior at the REPL which you want to preserve, call `quiktest`.  You may
+find setting up long and complex tests is better done directly in the test suite.
+Used as intended, doing the usual sort of REPL-driven development, and punctuating it
+with frequent, small tests, as soon as the program exhibits desirable behavior, one
+gains a strong test suite a little bit at a time.  Reducing the need to switch to
+"writing tests mode" is the very motive of **QuikTest.jl**.
+
+If you do find yourself wanting to set up a longer sequence of tests, it's probably a
+good idea to reboot the REPL, rather than laboriously count back the lines you intend
+to test, or call `quiktest()` and manually junk a very large number of lines.
+Although it's easy enough to guess-and-check: if you call, say `quiktest(7)`, and a
+couple lines are missing, just press `[q]` and call `quiktest(9)`. Lines containing a
+call to `quiktest` are never counted, so there's no need to account for them.
+
+`QuikTest` isn't a separate mode, in the REPL sense, but setting up good tests does
+call for a particular technique. `QuikTest` is unaware of `ans` in the normal Julian
+REPL mode, or `Out[n]` in the numbered prompt mode. If you use these in a test, you
+won't get the results you want.
+
+Bringing us to the next tip: QuikTest makes tests which don't meet the requirement
+for that type of test into a comment, and the comment contains the type of test which
+would meet the requirement: for example, if a line marked ✅ for test throws an error,
+the commented-out test will be in the form for a line marked ❌ for error test.  Sometimes
+you just want to smuggle a test into the suite and edit it into shape.  Use a broken test
+for this (⚠️), it will make the most minimal changes to the part of the test you want.
+
+Especially if you're accustomed to writing your tests at the REPL already, you may be
+tempted to use `==` to compare a result with its expected value.  `QuikTest` makes no
+attempt to detect or correct for this, what you'll end up with is not the test you want.
+
+```jldoctest
+julia> fruits = Dict(:a => "apple", :b => "berry")
+Dict{Symbol, String} with 2 entries:
+  :a => "apple"
+  :b => "berry"
+
+julia> fruits[:a] == "apple"  # No
+true
+
+julia> fruits[:a]  # Yes
+"apple"
+```
+
+Let **QuikTest** do the work for you!
+
+Compare the results:
+
+```julia
+fruits = Dict(:a => "apple", :b => "berry")
+@test (fruits[:a] == "apple") == false # true
+@test fruits[:a] == false # "apple"
+```
+
+Next tip: when you add a line intended for one of the nonstandard tests, a type test,
+snaptest, or broken test, drop a comment to remind yourself what it's for.  They're
+easy to lose track of when you start editing the session into tests.
+
+The various evaluations involved in producing the final test will swallow any
+comments, so conversely, don't try to add comments you want in the test suite
+to the REPL session, it won't work.  The natural time to add such comments is after
+the tests are pasted in, you've run the suite to confirm they fail, and are editing
+them to pass.
+
+Favor writing tests a few at a time. The pagesize for the `QuikTest` menu includes 13
+lines with their results, after which paging is necessary, this is a reasonable
+heuristic for a maximum size for a `QuikTest` session.  If you want more tests out of
+a given setup, assuming that setup is at the beginning of your test session, it's
+easy to copy-paste those lines in the terminal, then remove the duplicates when
+pasted into the test.
 
 ## Configuring QuikTest
 
@@ -219,13 +298,14 @@ latter is somewhat brittle.  If this name is not defined, or it isn't an Expr, t
 will have no effect; if evaluating `QUIKTEST_PREFACE` throws an error, a warning will
 occur.
 
-My `startup.jl`, for example, looks for a file in the working directory called
-`start.jl` (which my standard PkgTemplate adds to `.gitignore`) and executes it if
-found, as the last action before going live.  There I put `using` statements relevant
-to developing that specific package, any `import` statements which are also useful,
-and sometimes use it as a scratchpad for helper functions of the ephemeral variety,
-those which come and go over the course of development.  Or lengthy example data which
-would be onerous to enter or paste at the REPL.  That sort of thing.
+A suggestion for integrating this: the last lines of my `startup.jl` look for a file
+in the current directory called `start.jl` (which my standard PkgTemplate adds to
+`.gitignore`) and executes it if found, as the last action before going live.  There
+I put `using` statements relevant to developing that specific package, any `import`
+statements which are also useful, and sometimes use it as a scratchpad for helper
+functions of the ephemeral variety, those which come and go over the course of
+development.  Or lengthy example data which would be onerous to enter or paste at the
+REPL.  That sort of thing.
 
 To integrate these with QuikTest, I do something like this:
 
@@ -261,7 +341,8 @@ checked once, during loading, and as such is not configurable at runtime.
 
 QuikTest does not currently offer a way to remove color from its menus.  An upcoming
 refactor to use StyledStrings after the Julia 1.11 release will provide an
-opportunity to do so.
+opportunity to do so, so a future release will respect the value of the `--color` flag
+used when starting `julia`.
 
 ## Caveats
 
@@ -283,17 +364,17 @@ intention, can be applied.
 Of course, QuikTest uses the REPL module context, and `QUIKTEST_PREFACE`, to
 evaluate, not the module of the test suite.  The user is responsible for making sure
 that symbols resolve correctly to their intended values, by adding the necessary
-`using` and `import` statements to the test file itself.  If it's important to you to
-keep that in sync automatically, you can define a small `.jl` file containing
-`QUIKTEST_PREFACE`, and eval that in the test suite, as well as when the REPL starts
-up.
+`using` and `import` statements to the test file itself.  If it would be useful to
+you to keep that in sync automatically, you might define a small `.jl` file
+containing `QUIKTEST_PREFACE`, and eval that in the test suite, as well as when the
+REPL starts up.
 
 Last, we have less of a caveat, and more of a statement about the scope and mission
 of QuikTests.  The project intentionally embraces a simple workflow, and doesn't
 cover some cases which a more maximalist project might.  For example, I considered
 adding a picker menu for complex return values, and combining that with a signal for
 when comparing a line to its result doesn't constitute a valid test.  But a picker
-menu is a very complex project, probably larger than QuikTest itself.  The intended
+menu is a very complex project, possibly larger than QuikTest itself.  The intended
 workflow is to work through the menu, paste in the tests, delete the ones which
 aren't satisfactory, head back to the REPL to use its fully-featured editing tools to
 narrow down a return value, then run quiktest again.  QuikTest doesn't generate
