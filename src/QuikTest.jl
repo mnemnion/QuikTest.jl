@@ -81,7 +81,7 @@ function onkey(menu::ToggleMenu, i::UInt32)
     return false
 end
 
-const menu = ToggleMenuMaker(header, settings, icons, 20;
+const menu = ToggleMenuMaker(header, settings, icons, 26;
                              keypress=onkey, charset=:unicode, scroll_wrap=true)
 
 """
@@ -306,11 +306,17 @@ end
     quieteval(mod::Module, expr)
 
 Evaluate `expr` in `mod` while redirecting `stdout` and `stderr`
-to `devnull`.
+to `devnull`.  Normalizes `:symbol` answers to splice
+into expressions as their represented forms.
 """
 function quieteval(mod::Module, expr)
     Base.redirect_stdio(stdout=devnull, stderr=devnull) do
-        return Base.eval(mod, expr)
+        ans = Base.eval(mod, expr)
+        if ans isa Symbol
+            return QuoteNode(ans)
+        else
+            return ans
+        end
     end
 end
 
@@ -318,12 +324,16 @@ end
 """
     compares_equal(mod::Module, ans::Any)
 
-    Checks if the stringified `repr` of `ans` is `==` to the repr itself.
+Check if the stringified `repr` of `ans` is `==` to the repr itself.
 This confirms that the test is valid.
 """
 function compares_equal(mod::Module, ans::Any)
     ans_expr = Meta.parse(stripstring(:($ans)))
-    return Base.eval(mod, :($ans == $ans_expr))
+    try
+        return Base.eval(mod, :($ans == $ans_expr))
+    catch _
+        return false
+    end
 end
 
 """
@@ -340,7 +350,10 @@ function wrap_comment(test_str::String)
     end
 end
 
-stripstring(e) = string(striplines(e))
+stripstring(e::Any) = string(striplines(e))
+
+# Special-case for a string, where we want a "string" back
+stripstring(e::AbstractString) = repr(e)
 
 # Placeholder symbol, we need this to splice comments into test strings
 const holdsym = :🤔✅🧿😅λ
@@ -366,9 +379,6 @@ function testify(mod::Module, e_str::AbstractString)
 end
 
 function test_for_ans(mod::Module, expr, ans)
-    if ans isa Symbol
-        ans = QuoteNode(ans)
-    end
     # Check if the result will be a valid test
     ans_equals_ans = compares_equal(mod, ans)
     if ans_equals_ans
@@ -377,7 +387,7 @@ function test_for_ans(mod::Module, expr, ans)
         else
             return stripstring(:(@test $expr == true)) * " # false"
         end
-    else  # A string will never fail this test so repr it is
+    else  # A string will never fail this test (?) so repr it is
         ans_str = repr("text/plain", ans)
         snaptest = string(striplines(:(@test repr("text/plain", $expr) == "📸" * $ans_str)))
         return "# test did not compare `==`:" * wrap_comment(snaptest)
@@ -392,15 +402,16 @@ function typetestify(mod::Module, e_str::AbstractString)
         @warn "Can't test type due to error in: $e_str\n    $err"
         if err isa LoadError
             wrong_str = wrong_error(err)
-            comment = "# type test throws load error:" * wrap_comment(string(striplines(:(@test_throws $holdsym @eval $expr))))
+            comment = "# type test throws load error:" * wrap_comment(stripstring(:(@test_throws $holdsym @eval $expr)))
             return replace(comment, holdstr => wrong_str)
         else
             wrong_str = wrong_error(err)
-            comment = "# type test throws error:" * wrap_comment(string(striplines(:(@test_throws $holdsym $expr))))
+            comment = "# type test throws error:" * wrap_comment(stripstring(:(@test_throws $holdsym $expr)))
             return replace(comment, holdstr => wrong_str)
         end
     end
-    string(striplines(:(@test $expr isa Union{}))) * wrap_comment("$(typeof(ans))")
+    correct_ans = :($expr isa $(typeof(ans)))
+    "@test #==# " * stripstring(:(typeof($expr) == Union{})) * wrap_comment(stripstring(correct_ans))
 end
 
 function broketestify(mod::Module, e_str::AbstractString)
@@ -413,9 +424,6 @@ function broketestify(mod::Module, e_str::AbstractString)
         else
             return string(striplines(:(@test_broken true || $expr)))
         end
-    end
-    if ans isa Symbol
-        ans = QuoteNode(ans)
     end
     ans_equals_ans = compares_equal(mod, ans)
     if ans_equals_ans
