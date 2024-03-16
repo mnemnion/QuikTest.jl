@@ -28,7 +28,7 @@ else
 end
 
 head = ("$(hl('k'))eep$(ico(1)), $(hl('t'))est$(ico(2)), $(hl('s'))napshot$(ico(3)), t$(hl('y'))pe$(ico(4)), $(hl('j'))unk$(ico(5)), $(hl('e'))rror test$(ico(6)), [$(hl('b'))roken$(ico(7))",
-       "Move lines $(hl('U'))p or $(hl('D'))own, {$(hl('J')) to clear, $(hl("Enter")) to accept, $(hl('q')) to quit")
+       "Move lines $(hl('U'))p or $(hl('D'))own, $(hl('J')) to clear, $(hl('C'))lone a line, $(hl("Enter")) to accept, $(hl('q')) to quit")
 header = apply_style(join(head, "\n"))
 
 # A QuikTest local module to hold test modules. A module module, one might say.
@@ -77,6 +77,15 @@ function onkey(menu::ToggleMenu, i::UInt32)
         selections[c], selections[c+2] = selections[c+2], selections[c]
         options[c+1], options[c+3] = options[c+3], options[c+1]
         selections[c+1], selections[c+3] = selections[c+1], selections[c+3]
+    elseif Char(i) == 'C'
+        c = menu.cursor[]
+        line = menu.options[c]
+        selected = menu.selections[c]
+        result = menu.options[c+1]
+        insert!(menu.options, c, result)
+        insert!(menu.selections, c, '\0')
+        insert!(menu.options, c, line)
+        insert!(menu.selections, c, selected)
     end
     return false
 end
