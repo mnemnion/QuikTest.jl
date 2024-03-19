@@ -90,7 +90,8 @@ Yes. QuikTest will never generate a test which will pass, if this happens, pleas
 Instead, it will generate a failing test, structured so that it's easy (quick!) to
 turn this into a passing test, once the tests are run and the new tests are confirmed
 to fail.  These are designed such that the standard test framework will print the
-correct answer when it fails.
+correct answer when it fails, and so that once the test is checked in, it can be
+turned into a passing test entirely by deleting from the test line.
 
 #### Why Though?
 
@@ -154,17 +155,18 @@ can assign a state directly by pressing the highlighted letter for that state.
           clear up unwanted lines, so you can focus on the remaining lines of interest.
           This will do the right thing even if you junk all the lines in the menu,
           although there is never a reason to do this.
+  - **C**:  Clone the current line.  Use when you would like to test a given line in
+            several ways.
 
 ---
 
 ## How It Works
 
 QuikTest searches the REPL history to retrieve the lines of interest, and evaluates
-them in an "anonymous" module. Julia doesn't actually have anonymous modules,
-so QuikTest contains an inner, private submodule, which is used entirely to generate
-modules with a gensymed name.
+them in an "anonymous" module. Julia doesn't actually have anonymous modules, so
+QuikTest gensyms a test module into the active REPL module.  As it happens, the REPL
+keeps track of the active module, so we don't have to guess which one this is.
 
-As it happens, the REPL keeps track of the active module, so we don't have to guess.
 Quiktest searches through the active module for any other named modules, and adds
 them with `using` to the anonymous module.  The REPL lines are then evaluated, the
 results of this stringified, and the menu built.  Lines which throw errors are marked
@@ -223,6 +225,11 @@ Although it's easy enough to guess-and-check: if you call, say `quiktest(7)`, an
 couple lines are missing, just press `[q]` and call `quiktest(9)`. Lines containing a
 call to `quiktest` are never counted, so there's no need to account for them.
 
+Sometimes it makes sense to set up a series of tests in a file, paste the setup into
+the REPL, and start making tests.  I like to do this in the test suite, making a new
+testset and writing the preamble.  It makes life easier to restart the REPL when
+doing thiis.
+
 `QuikTest` isn't a separate mode, in the REPL sense, but setting up good tests does
 call for a particular technique. `QuikTest` is unaware of `ans` in the normal Julian
 REPL mode, or `Out[n]` in the numbered prompt mode. If you use these in a test, you
@@ -237,7 +244,7 @@ for this (⚠️), it will make the most minimal changes to the part of the test
 
 Especially if you're accustomed to writing your tests at the REPL already, you may be
 tempted to use `==` to compare a result with its expected value.  `QuikTest` makes no
-attempt to detect or correct for this, what you'll end up with is not the test you want.
+attempt to detect or correct for this, so what you'll end up with won't be the test you want.
 
 ```jldoctest
 julia> fruits = Dict(:a => "apple", :b => "berry")
@@ -264,7 +271,10 @@ fruits = Dict(:a => "apple", :b => "berry")
 
 Next tip: when you add a line intended for one of the nonstandard tests, a type test,
 snaptest, or broken test, drop a comment to remind yourself what it's for.  They're
-easy to lose track of when you start editing the session into tests.
+easy to lose track of when you start editing the session into tests.  The REPL
+history collapses identical lines, so this is one way to do several tests on the same
+line, such as a test for equality and a test for type.  The easiest way is to use
+`[C]lone` to make another copy of the line of interest.
 
 The various evaluations involved in producing the final test will swallow any
 comments, so conversely, don't try to add comments you want in the test suite

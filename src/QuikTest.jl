@@ -31,9 +31,6 @@ head = ("$(hl('k'))eep$(ico(1)), $(hl('t'))est$(ico(2)), $(hl('s'))napshot$(ico(
        "Move lines $(hl('U'))p or $(hl('D'))own, $(hl('J')) to clear, $(hl('C'))lone a line, $(hl("Enter")) to accept, $(hl('q')) to quit")
 header = apply_style(join(head, "\n"))
 
-# A QuikTest local module to hold test modules. A module module, one might say.
-baremodule ModMod end
-
 """
     onkey(menu::ToggleMenu, i::UInt32)
 
@@ -104,14 +101,14 @@ function make_test_module(main::Module)
     # TODO we use this twice and it's expensive, we should cache it
     module_names = Symbol[]
     for name in names(main; all=true, imported=true)
-        if isdefined(Main, name)
-            val = Base.eval(Main, name)
+        if isdefined(main, name)
+            val = Base.eval(main, name)
             if val ≠ main && val isa Module
                 push!(module_names, name)
             end
         end
     end
-    test_mod = Base.eval(ModMod, :(module $(gensym()) end))
+    test_mod = Base.eval(main, :(module $(gensym()) end))
     # Import existing module names on a best-effort basis
     for name in module_names
         try Base.eval(test_mod, :(using $(name)))
@@ -119,7 +116,7 @@ function make_test_module(main::Module)
         end
     end
     try
-        preface = Base.eval(main, :(QUIKTEST_PREFACE))
+        preface = Base.eval(test_mod, :(QUIKTEST_PREFACE))
         try
             Base.eval(test_mod, preface)
         catch e  # An error in QUIKTEST_PREFACE
@@ -363,6 +360,8 @@ stripstring(e::Any) = string(striplines(e))
 
 # Special-case for a string, where we want a "string" back
 stripstring(e::AbstractString) = repr(e)
+# Same for Char
+stripstring(e::AbstractChar) = repr(e)
 
 # Placeholder symbol, we need this to splice comments into test strings
 const holdsym = :🤔✅🧿😅λ
