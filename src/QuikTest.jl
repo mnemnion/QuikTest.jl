@@ -8,7 +8,7 @@ See [`quiktest`](@ref) for more.
 module QuikTest
 
 import InteractiveUtils: clipboard, subtypes
-import MacroTools: striplines, prewalk
+import MacroTools: striplines, postwalk
 import REPL.TerminalMenus: request
 import Term: apply_style, highlight_syntax
 
@@ -116,7 +116,7 @@ function make_test_module(main::Module)
         end
     end
     try
-        preface = Base.eval(test_mod, :(QUIKTEST_PREFACE))
+        preface = Base.eval(test_mod, :($(main.QUIKTEST_PREFACE)))
         try
             Base.eval(test_mod, preface)
         catch e  # An error in QUIKTEST_PREFACE
@@ -124,6 +124,7 @@ function make_test_module(main::Module)
         end
     catch e
         # QUIKTEST_PREFACE may not exist, this is fine
+        # TODO We should probably check for this so we can catch LoadErrors as well
     end
     return test_mod
 end
@@ -137,13 +138,13 @@ function calls_quiktest(line)
     try
         expr = Meta.parse(line)
         hasit = false
-        prewalk(expr) do ex
+        postwalk(expr) do ex
             if ex isa Expr && ex.head == :call && expr.args[1] == :quiktest
                 hasit = true
             end
         end
         return hasit
-    catch e
+    catch
         return false
     end
 end
@@ -155,14 +156,18 @@ Parses the line to determine if it has an assignment expression,
 or defines a function.
 """
 function has_assignment(line)
-    expr = Meta.parse(line) # We already know this doesn't throw an error
-    hasit = false
-    prewalk(expr) do ex
-        if ex isa Expr && (ex.head == :(=) || ex.head == :function)
-            hasit = true
+    try
+        expr = Meta.parse(line)
+        hasit = false
+        postwalk(expr) do ex
+            if ex isa Expr && (ex.head == :(=) || ex.head == :function)
+                hasit = true
+            end
         end
+        return hasit
+    catch
+        return false
     end
-    return hasit
 end
 
 function _quiktest(numlines::Integer, stop::Integer)
@@ -227,7 +232,7 @@ function _quiktest(numlines::Integer, stop::Integer)
         return nothing
     end
     the_test |> clipboard
-    Base.eval(main, :(latest_test = $(repr(the_test))))
+    Base.eval(main, :(latest_test = $(the_test)))
     print("$tcount line test copied to clipboard and assigned to 'latest_test'")
 end
 
